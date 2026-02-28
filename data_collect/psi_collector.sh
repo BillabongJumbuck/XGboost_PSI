@@ -18,7 +18,7 @@ while true
 do
     TS=$(date +%s%3N)
 
-    PSI=$(cat /proc/pressure/memory)
+    PSI=$(su -c "cat /proc/pressure/memory")
     SOME=$(echo "$PSI" | grep some | sed -n 's/.*total=\([0-9]*\).*/\1/p')
     FULL=$(echo "$PSI" | grep full | sed -n 's/.*total=\([0-9]*\).*/\1/p')
 
@@ -27,8 +27,18 @@ do
     PGSCAN=$(grep "^pgscan_direct " /proc/vmstat | awk '{print $2}')
     PGSTEAL=$(grep "^pgsteal_direct " /proc/vmstat | awk '{print $2}')
     PGMAJ=$(grep "^pgmajfault " /proc/vmstat | awk '{print $2}')
-    REFAULT=$(grep "^workingset_refault " /proc/vmstat | awk '{print $2}')
-    ALLOCSTALL=$(grep "^allocstall " /proc/vmstat | awk '{print $2}')
+    
+    # workingset_refault = anon + file
+    REFAULT_ANON=$(grep "^workingset_refault_anon " /proc/vmstat | awk '{print $2}')
+    REFAULT_FILE=$(grep "^workingset_refault_file " /proc/vmstat | awk '{print $2}')
+    REFAULT=$((REFAULT_ANON + REFAULT_FILE))
+    
+    # allocstall = dma32 + normal + movable
+    ALLOC_DMA32=$(grep "^allocstall_dma32 " /proc/vmstat | awk '{print $2}')
+    ALLOC_NORMAL=$(grep "^allocstall_normal " /proc/vmstat | awk '{print $2}')
+    ALLOC_MOVABLE=$(grep "^allocstall_movable " /proc/vmstat | awk '{print $2}')
+    ALLOCSTALL=$((ALLOC_DMA32 + ALLOC_NORMAL + ALLOC_MOVABLE))
+    
     PSWPIN=$(grep "^pswpin " /proc/vmstat | awk '{print $2}')
     PSWPOUT=$(grep "^pswpout " /proc/vmstat | awk '{print $2}')
 
