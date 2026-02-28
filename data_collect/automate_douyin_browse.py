@@ -1,15 +1,12 @@
 import subprocess
 import time
-import signal
-import sys
-import os
 from datetime import datetime
 
 DEVICE_COLLECTOR_PATH = "/data/local/tmp/psi_collector.sh"
 DEVICE_OUTPUT_PATH = "/data/local/tmp/psi_data.csv"
 
-LOCAL_COLLECTOR = "psi_collector.sh"
-LOCAL_STRESS_SCRIPT = "stress_scenario.py"
+LOCAL_COLLECTOR = "psi_collector_with_phase.sh"
+LOCAL_STRESS_SCRIPT = "stress_douyin_browse.py"
 
 
 def run(cmd, check=True, timeout=None):
@@ -30,7 +27,6 @@ def adb(cmd, check=True, timeout=10, retries=3):
                 time.sleep(1)
             else:
                 raise
-    # 最后一次尝试，不捕获异常
     return run(f"adb {cmd}", check=check, timeout=timeout)
 
 
@@ -40,19 +36,19 @@ def push_collector():
 
 
 def start_collector():
-    print("[*] Starting collector in background...")
+    print("[*] Starting collector (with phase) in background...")
     adb(f'shell "nohup {DEVICE_COLLECTOR_PATH} > /dev/null 2>&1 & echo $! > /data/local/tmp/collector.pid"')
 
 
 def stop_collector():
     print("[*] Stopping collector...")
-    adb('shell "if [ -f /data/local/tmp/collector.pid ]; then kill $(cat /data/local/tmp/collector.pid) 2>/dev/null; fi"', check=False)
+    adb('shell "if [ -f /data/local/tmp/collector.pid ]; then kill $(cat /data/local/tmp/collector.pid); fi"')
 
 
 def pull_data():
     print("[*] Pulling data...")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    local_output = f"../data/psi_data_{timestamp}.csv"
+    local_output = f"../data/psi_douyin_{timestamp}.csv"
     result = adb(f"pull {DEVICE_OUTPUT_PATH} {local_output}", check=False)
     if result.returncode != 0:
         print("[!] Warning: Failed to pull data file (may not exist)")
@@ -63,6 +59,7 @@ def pull_data():
 def clear_previous_data():
     adb(f"shell rm -f {DEVICE_OUTPUT_PATH}")
     adb(f"shell rm -f /data/local/tmp/collector.pid")
+    adb(f"shell rm -f /data/local/tmp/current_phase.txt")
 
 
 def drop_caches():
@@ -72,27 +69,20 @@ def drop_caches():
 
 
 def run_stress():
-    print("[*] Running stress scenario...")
+    print("[*] Running Douyin browse stress scenario...")
     subprocess.run(["python", LOCAL_STRESS_SCRIPT])
 
 
 def main():
     try:
-        print("===== PSI Demo Automation =====")
+        print("===== PSI Douyin Browse Scenario =====")
 
         clear_previous_data()
         push_collector()
         drop_caches()
 
         start_collector()
-
-        # 等待 2 秒确保采集启动
-        time.sleep(2)
-
-        # 验证采集器是否在运行
-        verify = adb('shell "cat /data/local/tmp/collector.pid 2>/dev/null && kill -0 $(cat /data/local/tmp/collector.pid) 2>/dev/null && echo OK"', check=False)
-        data_check = adb(f'shell "[ -f {DEVICE_OUTPUT_PATH} ] && echo EXISTS"', check=False)
-        print("[*] Collector status check done. If no 'OK' above, collector may have failed to start.")
+        time.sleep(2)  # 确保采集启动
 
         run_stress()
 
