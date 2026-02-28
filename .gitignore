@@ -1,0 +1,20 @@
+# Python virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# uv
+.uv/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+
+# Data files (optional - remove if you want to track them)
+# *.csv
