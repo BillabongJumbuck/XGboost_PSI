@@ -3,69 +3,72 @@
 OUT="/data/local/tmp/psi_data.csv"
 PHASE_FILE="/data/local/tmp/current_phase.txt"
 
-# 初始化 phase 文件
-echo "idle" > $PHASE_FILE
+echo "idle" > "$PHASE_FILE"
+echo "ts,phase,some_delta,full_delta,mem_available,pgscan_direct,pgsteal_direct,pgmajfault,workingset_refault,allocstall,pswpin,pswpout" > "$OUT"
 
-echo "ts,phase,some_delta,full_delta,mem_available,pgscan_direct,pgsteal_direct,pgmajfault,workingset_refault,allocstall,pswpin,pswpout" > $OUT
-
-PREV_SOME=0
-PREV_FULL=0
-PREV_PGSCAN=0
-PREV_PGSTEAL=0
-PREV_PGMAJ=0
-PREV_REFAULT=0
-PREV_ALLOCSTALL=0
-PREV_PSWPIN=0
-PREV_PSWPOUT=0
+# 引入一个标记，用于跳过第一轮的差异计算，仅作为基准
+FIRST_RUN=1
 
 while true
 do
     TS=$(date +%s%3N)
 
-    # 读取当前阶段标签
+    # 读取 phase
     if [ -f "$PHASE_FILE" ]; then
-        PHASE=$(cat $PHASE_FILE | tr -d '\n\r ')
+        PHASE=$(cat "$PHASE_FILE" | tr -d '\n\r ')
     else
         PHASE="unknown"
     fi
 
-    PSI=$(su -c "cat /proc/pressure/memory")
-    SOME=$(echo "$PSI" | grep some | sed -n 's/.*total=\([0-9]*\).*/\1/p')
-    FULL=$(echo "$PSI" | grep full | sed -n 's/.*total=\([0-9]*\).*/\1/p')
+    # 优化 1: 纯 Shell 字符串截取解析 PSI，避免多余的 grep/sed 开销
+    PSI_MEM=$(cat /proc/pressure/memory)
+    # 取 some 那一行的 total 值
+    SOME=${PSI_MEM#*some*total=}
+    SOME=${SOME%% *}
+    # 取 full 那一行的 total 值
+    FULL=${PSI_MEM#*full*total=}
+    FULL=${FULL%% *}
 
-    MEM_AVAIL=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+    # 优化 2: awk 单次扫描解析所有 vmstat 和 meminfo 指标
+    # 使用 eval 将 awk 的输出直接化为 Shell 变量
+    eval $(awk '
+        FILENAME == "/proc/meminfo" && /^MemAvailable:/ { mem=$2 }
+        FILENAME == "/proc/vmstat" {
+            if ($1 == "pgscan_direct") scan=$2
+            else if ($1 == "pgsteal_direct") steal=$2
+            else if ($1 == "pgmajfault") maj=$2
+            else if ($1 == "workingset_refault_anon") ref_a=$2
+            else if ($1 == "workingset_refault_file") ref_f=$2
+            else if ($1 == "allocstall_dma32") al_d=$2
+            else if ($1 == "allocstall_normal") al_n=$2
+            else if ($1 == "allocstall_movable") al_m=$2
+            else if ($1 == "pswpin") pin=$2
+            else if ($1 == "pswpout") pout=$2
+        }
+        END {
+            printf "MEM_AVAIL=%d; PGSCAN=%d; PGSTEAL=%d; PGMAJ=%d; REFAULT=%d; ALLOCSTALL=%d; PSWPIN=%d; PSWPOUT=%d", 
+                   mem, scan, steal, maj, ref_a+ref_f, al_d+al_n+al_m, pin, pout
+        }
+    ' /proc/meminfo /proc/vmstat)
 
-    PGSCAN=$(grep "^pgscan_direct " /proc/vmstat | awk '{print $2}')
-    PGSTEAL=$(grep "^pgsteal_direct " /proc/vmstat | awk '{print $2}')
-    PGMAJ=$(grep "^pgmajfault " /proc/vmstat | awk '{print $2}')
-    
-    # workingset_refault = anon + file
-    REFAULT_ANON=$(grep "^workingset_refault_anon " /proc/vmstat | awk '{print $2}')
-    REFAULT_FILE=$(grep "^workingset_refault_file " /proc/vmstat | awk '{print $2}')
-    REFAULT=$((REFAULT_ANON + REFAULT_FILE))
-    
-    # allocstall = dma32 + normal + movable
-    ALLOC_DMA32=$(grep "^allocstall_dma32 " /proc/vmstat | awk '{print $2}')
-    ALLOC_NORMAL=$(grep "^allocstall_normal " /proc/vmstat | awk '{print $2}')
-    ALLOC_MOVABLE=$(grep "^allocstall_movable " /proc/vmstat | awk '{print $2}')
-    ALLOCSTALL=$((ALLOC_DMA32 + ALLOC_NORMAL + ALLOC_MOVABLE))
-    
-    PSWPIN=$(grep "^pswpin " /proc/vmstat | awk '{print $2}')
-    PSWPOUT=$(grep "^pswpout " /proc/vmstat | awk '{print $2}')
+    # 修复核心 Bug：跳过第一轮，只赋初值不写入
+    if [ "$FIRST_RUN" -eq 1 ]; then
+        FIRST_RUN=0
+    else
+        SOME_D=$((SOME - PREV_SOME))
+        FULL_D=$((FULL - PREV_FULL))
+        PGSCAN_D=$((PGSCAN - PREV_PGSCAN))
+        PGSTEAL_D=$((PGSTEAL - PREV_PGSTEAL))
+        PGMAJ_D=$((PGMAJ - PREV_PGMAJ))
+        REFAULT_D=$((REFAULT - PREV_REFAULT))
+        ALLOCSTALL_D=$((ALLOCSTALL - PREV_ALLOCSTALL))
+        PSWPIN_D=$((PSWPIN - PREV_PSWPIN))
+        PSWPOUT_D=$((PSWPOUT - PREV_PSWPOUT))
 
-    # 计算 delta
-    SOME_D=$((SOME - PREV_SOME))
-    FULL_D=$((FULL - PREV_FULL))
-    PGSCAN_D=$((PGSCAN - PREV_PGSCAN))
-    PGSTEAL_D=$((PGSTEAL - PREV_PGSTEAL))
-    PGMAJ_D=$((PGMAJ - PREV_PGMAJ))
-    REFAULT_D=$((REFAULT - PREV_REFAULT))
-    ALLOCSTALL_D=$((ALLOCSTALL - PREV_ALLOCSTALL))
-    PSWPIN_D=$((PSWPIN - PREV_PSWPIN))
-    PSWPOUT_D=$((PSWPOUT - PREV_PSWPOUT))
+        echo "$TS,$PHASE,$SOME_D,$FULL_D,$MEM_AVAIL,$PGSCAN_D,$PGSTEAL_D,$PGMAJ_D,$REFAULT_D,$ALLOCSTALL_D,$PSWPIN_D,$PSWPOUT_D" >> "$OUT"
+    fi
 
-    echo "$TS,$PHASE,$SOME_D,$FULL_D,$MEM_AVAIL,$PGSCAN_D,$PGSTEAL_D,$PGMAJ_D,$REFAULT_D,$ALLOCSTALL_D,$PSWPIN_D,$PSWPOUT_D" >> $OUT
-
+    # 更新上一轮的基准值
     PREV_SOME=$SOME
     PREV_FULL=$FULL
     PREV_PGSCAN=$PGSCAN
@@ -76,5 +79,5 @@ do
     PREV_PSWPIN=$PSWPIN
     PREV_PSWPOUT=$PSWPOUT
 
-    usleep 500000   # 500ms 精准采样
+    usleep 500000
 done
