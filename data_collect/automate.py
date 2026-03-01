@@ -36,6 +36,8 @@ def adb(cmd, check=True, timeout=10, retries=3):
 
 def push_collector():
     adb(f"push {LOCAL_COLLECTOR} {DEVICE_COLLECTOR_PATH}")
+    # 修复 Windows \r\n 换行符
+    adb(f'shell "sed -i \'s/\\r$//\' {DEVICE_COLLECTOR_PATH}"')
     adb(f"shell chmod +x {DEVICE_COLLECTOR_PATH}")
 
 

@@ -32,6 +32,8 @@ def adb(cmd, check=True, timeout=10, retries=3):
 
 def push_collector():
     adb(f"push {LOCAL_COLLECTOR} {DEVICE_COLLECTOR_PATH}")
+    # 修复 Windows \r\n 换行符（Android shell 无法执行含 \r 的脚本）
+    adb(f'shell "sed -i \'s/\\r$//\' {DEVICE_COLLECTOR_PATH}"')
     adb(f"shell chmod +x {DEVICE_COLLECTOR_PATH}")
 
 
@@ -42,7 +44,8 @@ def start_collector():
 
 def stop_collector():
     print("[*] Stopping collector...")
-    adb('shell "if [ -f /data/local/tmp/collector.pid ]; then kill $(cat /data/local/tmp/collector.pid); fi"')
+    # check=False: process may already be gone — that's OK
+    adb('shell "if [ -f /data/local/tmp/collector.pid ]; then kill $(cat /data/local/tmp/collector.pid) 2>/dev/null; fi"', check=False)
 
 
 def pull_data():
